@@ -1,0 +1,75 @@
+name: Terraform CI/CD with Conftest
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  id-token: write       # Required for AWS OIDC
+  contents: read        # Required to checkout repository
+
+jobs:
+  terraform:
+    name: Terraform + Conftest
+    runs-on: ubuntu-latest
+
+    env:
+      TF_WORKING_DIR: terraform
+
+    steps:
+      # 1️⃣ Checkout source code
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2️⃣ Configure AWS credentials using OIDC
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::340285141944:role/ec2-terraform-adminaccess
+          aws-region: us-east-1
+
+      # 3️⃣ Setup Terraform
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.5
+
+      # 4️⃣ Terraform Init
+      - name: Terraform Init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform init -input=false
+
+      # 5️⃣ Terraform Validate
+      - name: Terraform Validate
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform validate
+
+      # 6️⃣ Terraform Plan (create JSON plan)
+      - name: Terraform Plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform plan -out=tfplan
+          terraform show -json tfplan > tfplan.json
+
+      # 7️⃣ Install Conftest
+      - name: Install Conftest
+        run: |
+          curl -L https://github.com/open-policy-agent/conftest/releases/download/v0.53.0/conftest_0.53.0_Linux_x86_64.tar.gz \
+            | tar xz
+          sudo mv conftest /usr/local/bin/
+          conftest --version
+
+      # 8️⃣ Run Conftest Policy Checks
+      - name: Conftest Policy Check
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          conftest test tfplan.json --policy ../policy
+
+      # 9️⃣ Terraform Apply (only on main branch)
+      - name: Terraform Apply
+        if: github.ref == 'refs/heads/main'
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform apply -auto-approve
+
